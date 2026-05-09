@@ -1,4 +1,4 @@
-// cms-api/server.js
+// cms-api/server.js (updated with API key protection)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -7,77 +7,86 @@ const fs = require('fs');
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// ============ SECURITY: Get API Key from Environment ============
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'your-default-dev-key-change-this';
+
+// ============ MIDDLEWARE ============
+app.use(cors({
+  origin: ['https://ayiapps.co.za', 'https://www.ayiapps.co.za', 'http://localhost:3000'],
+  credentials: true
+}));
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
+
+// ============ AUTHENTICATION MIDDLEWARE ============
+const requireAdmin = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  
+  if (!apiKey) {
+    return res.status(401).json({ 
+      error: 'API key required. Please provide x-api-key header' 
+    });
+  }
+  
+  if (apiKey !== ADMIN_API_KEY) {
+    return res.status(403).json({ 
+      error: 'Invalid API key. Unauthorized access' 
+    });
+  }
+  
+  next();
+};
 
 // Create uploads directory if it doesn't exist
 if (!fs.existsSync('uploads')) {
   fs.mkdirSync('uploads');
 }
 
-// MongoDB Connection (using memory storage for now, or connect to your DB)
-// Option 1: Use in-memory for testing (no database needed)
+// ============ IN-MEMORY DATABASE ============
 let inMemoryData = {
   pages: {},
-  apps: [],
+  apps: [
+    {
+      appId: "app_001",
+      name: "CV Generator",
+      description: "Create professional CVs instantly with AI",
+      category: "Productivity",
+      isActive: true,
+      order: 1,
+      price: 1,
+      features: ["AI Powered", "Multiple Templates", "PDF Export"],
+      usageCount: 1250,
+      createdAt: new Date().toISOString()
+    },
+    {
+      appId: "app_002",
+      name: "QR Code Generator",
+      description: "Generate custom QR codes for your business",
+      category: "Marketing",
+      isActive: true,
+      order: 2,
+      price: 0,
+      features: ["Custom Colors", "Logo Upload", "Bulk Generation"],
+      usageCount: 890,
+      createdAt: new Date().toISOString()
+    },
+    {
+      appId: "app_003",
+      name: "Social Media Scheduler",
+      description: "Schedule posts across all social platforms",
+      category: "Marketing",
+      isActive: true,
+      order: 3,
+      price: 5,
+      features: ["Multi-platform", "Analytics", "Team Collaboration"],
+      usageCount: 450,
+      createdAt: new Date().toISOString()
+    }
+  ],
   announcements: []
 };
 
-// Sample initial data
-inMemoryData.apps = [
-  {
-    appId: "app_001",
-    name: "CV Generator",
-    description: "Create professional CVs instantly with AI",
-    category: "Productivity",
-    isActive: true,
-    order: 1,
-    price: 1,
-    features: ["AI Powered", "Multiple Templates", "PDF Export"],
-    usageCount: 1250,
-    createdAt: new Date().toISOString()
-  },
-  {
-    appId: "app_002", 
-    name: "QR Code Generator",
-    description: "Generate custom QR codes for your business",
-    category: "Marketing",
-    isActive: true,
-    order: 2,
-    price: 0,
-    features: ["Custom Colors", "Logo Upload", "Bulk Generation"],
-    usageCount: 890,
-    createdAt: new Date().toISOString()
-  },
-  {
-    appId: "app_003",
-    name: "Social Media Scheduler",
-    description: "Schedule posts across all social platforms",
-    category: "Marketing",
-    isActive: true,
-    order: 3,
-    price: 5,
-    features: ["Multi-platform", "Analytics", "Team Collaboration"],
-    usageCount: 450,
-    createdAt: new Date().toISOString()
-  }
-];
-
-inMemoryData.announcements = [
-  {
-    _id: "1",
-    title: "New Apps Available!",
-    content: "Check out our latest AI-powered applications",
-    type: "success",
-    isActive: true,
-    startDate: new Date(),
-    endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-  }
-];
-
-// ============ API ENDPOINTS ============
+// ============ PUBLIC ENDPOINTS (No API key needed) ============
 
 // Health check
 app.get('/health', (req, res) => {
@@ -88,13 +97,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Get all active apps
+// Get all active apps (public - main portal needs this)
 app.get('/api/cms/apps', (req, res) => {
   const activeApps = inMemoryData.apps.filter(app => app.isActive === true);
   res.json(activeApps);
 });
 
-// Get single app by ID
+// Get single app by ID (public)
 app.get('/api/cms/apps/:appId', (req, res) => {
   const app = inMemoryData.apps.find(a => a.appId === req.params.appId);
   if (!app) {
@@ -103,8 +112,28 @@ app.get('/api/cms/apps/:appId', (req, res) => {
   res.json(app);
 });
 
-// Add new app (Admin only - you'll add auth later)
-app.post('/api/cms/apps', (req, res) => {
+// Get announcements (public)
+app.get('/api/cms/announcements', (req, res) => {
+  const now = new Date();
+  const activeAnnouncements = inMemoryData.announcements.filter(a => 
+    a.isActive && new Date(a.startDate) <= now && new Date(a.endDate) >= now
+  );
+  res.json(activeAnnouncements);
+});
+
+// Track app usage (public - called when users launch apps)
+app.post('/api/cms/apps/:appId/track', (req, res) => {
+  const app = inMemoryData.apps.find(a => a.appId === req.params.appId);
+  if (app) {
+    app.usageCount = (app.usageCount || 0) + 1;
+  }
+  res.json({ success: true });
+});
+
+// ============ PROTECTED ENDPOINTS (API key required) ============
+
+// Add new app (requires API key)
+app.post('/api/cms/apps', requireAdmin, (req, res) => {
   const newApp = {
     appId: `app_${Date.now()}`,
     ...req.body,
@@ -117,8 +146,8 @@ app.post('/api/cms/apps', (req, res) => {
   res.json({ success: true, app: newApp });
 });
 
-// Update app (toggle active, change order, etc)
-app.put('/api/cms/apps/:appId', (req, res) => {
+// Update app (requires API key)
+app.put('/api/cms/apps/:appId', requireAdmin, (req, res) => {
   const index = inMemoryData.apps.findIndex(a => a.appId === req.params.appId);
   if (index === -1) {
     return res.status(404).json({ error: 'App not found' });
@@ -128,8 +157,8 @@ app.put('/api/cms/apps/:appId', (req, res) => {
   res.json({ success: true, app: inMemoryData.apps[index] });
 });
 
-// Delete/Disable app
-app.delete('/api/cms/apps/:appId', (req, res) => {
+// Delete/Disable app (requires API key)
+app.delete('/api/cms/apps/:appId', requireAdmin, (req, res) => {
   const index = inMemoryData.apps.findIndex(a => a.appId === req.params.appId);
   if (index === -1) {
     return res.status(404).json({ error: 'App not found' });
@@ -139,26 +168,8 @@ app.delete('/api/cms/apps/:appId', (req, res) => {
   res.json({ success: true, message: 'App hidden from marketplace' });
 });
 
-// Track app usage
-app.post('/api/cms/apps/:appId/track', (req, res) => {
-  const app = inMemoryData.apps.find(a => a.appId === req.params.appId);
-  if (app) {
-    app.usageCount = (app.usageCount || 0) + 1;
-  }
-  res.json({ success: true });
-});
-
-// Get page content
-app.get('/api/cms/page/:pageId', (req, res) => {
-  const content = inMemoryData.pages[req.params.pageId] || {
-    pageId: req.params.pageId,
-    content: { title: 'Default Page', html: '<p>Content coming soon...</p>' }
-  };
-  res.json(content);
-});
-
-// Update page content (Admin)
-app.post('/api/cms/page/:pageId', (req, res) => {
+// Update page content (requires API key)
+app.post('/api/cms/page/:pageId', requireAdmin, (req, res) => {
   inMemoryData.pages[req.params.pageId] = {
     pageId: req.params.pageId,
     content: req.body,
@@ -167,17 +178,8 @@ app.post('/api/cms/page/:pageId', (req, res) => {
   res.json({ success: true });
 });
 
-// Get announcements
-app.get('/api/cms/announcements', (req, res) => {
-  const now = new Date();
-  const activeAnnouncements = inMemoryData.announcements.filter(a => 
-    a.isActive && new Date(a.startDate) <= now && new Date(a.endDate) >= now
-  );
-  res.json(activeAnnouncements);
-});
-
-// Add announcement (Admin)
-app.post('/api/cms/announcements', (req, res) => {
+// Add announcement (requires API key)
+app.post('/api/cms/announcements', requireAdmin, (req, res) => {
   const newAnnouncement = {
     _id: String(Date.now()),
     ...req.body,
@@ -187,15 +189,16 @@ app.post('/api/cms/announcements', (req, res) => {
   res.json({ success: true, announcement: newAnnouncement });
 });
 
-// Get all apps (including inactive - for admin)
-app.get('/api/cms/admin/apps', (req, res) => {
+// Get all apps including inactive (admin only, requires API key)
+app.get('/api/cms/admin/apps', requireAdmin, (req, res) => {
   res.json(inMemoryData.apps);
 });
 
 // Start server
 const PORT = process.env.PORT || 3005;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ CMS API running on http://localhost:${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
   console.log(`📍 Apps endpoint: http://localhost:${PORT}/api/cms/apps`);
+  console.log(`🔒 Protected endpoints require x-api-key header`);
 });
